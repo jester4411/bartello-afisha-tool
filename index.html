@@ -95,6 +95,16 @@
       color: #b91c1c;
       font-size: 0.9rem;
     }
+    .warn-box {
+      margin-top: 12px;
+      padding: 12px;
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 6px;
+      color: #92400e;
+      font-size: 0.85rem;
+      line-height: 1.6;
+    }
     .hidden { display: none; }
     .example {
       margin-bottom: 20px;
@@ -283,6 +293,7 @@
     <div class="stats" id="step3stats"></div>
     <button class="btn btn-download" onclick="downloadFile(periodsData, periodsFilename)">Скачать <span id="step3filename"></span></button>
   </div>
+  <div id="step3warn" class="hidden warn-box"></div>
   <div id="step3error" class="hidden error"></div>
 </div>
 
@@ -458,7 +469,7 @@ async function generateAfisha() {
     let skippedHeader = false;
 
     for (const cols of rows) {
-      if (cols.length < 5) continue;
+      if (cols.length < 3) continue;
 
       const name = cols[0].trim();
       if (!name) continue;
@@ -476,19 +487,22 @@ async function generateAfisha() {
 
       const time = parseTime(timeStr);
       const startDate = parseDate(startDateStr);
-      const endDate = parseDate(endDateStr);
+      if (!startDate) continue;
 
-      if (!startDate || !endDate) continue;
-      if (startDate > endDate) continue;
-
-      const step = freq.includes('через день') ? 2 : 1;
+      const endDate = endDateStr ? parseDate(endDateStr) : null;
       const timeFormatted = formatTimeNoLeadingZero(time.h, time.m, time.s);
 
-      const current = new Date(startDate);
-      while (current <= endDate) {
-        const dateFormatted = formatDate(current);
-        output.push(`${code},${name},${dateFormatted} ${timeFormatted}`);
-        current.setDate(current.getDate() + step);
+      if (!endDate) {
+        // Нет даты окончания — одно мероприятие на дату начала
+        output.push(`${code},${name},${formatDate(startDate)} ${timeFormatted}`);
+      } else {
+        if (startDate > endDate) continue;
+        const step = freq.includes('через день') ? 2 : 1;
+        const current = new Date(startDate);
+        while (current <= endDate) {
+          output.push(`${code},${name},${formatDate(current)} ${timeFormatted}`);
+          current.setDate(current.getDate() + step);
+        }
       }
     }
 
@@ -625,6 +639,7 @@ async function matchIds() {
 // --- Step 3: Generate Periods ---
 async function generatePeriods() {
   hideError('step3error');
+  document.getElementById('step3warn').classList.add('hidden');
   document.getElementById('step3result').classList.add('hidden');
 
   const afishaIdsInput = document.getElementById('afishaIdsFile');
@@ -643,6 +658,8 @@ async function generatePeriods() {
 
     // Map: "normalizedName|H:MM:SS" -> { slots, preorderOffsetMs }
     const periodsMap = new Map();
+    // Track conflicts: same name+time but different periods
+    const conflicts = [];
     let skippedHeader = false;
 
     for (const cols of schedRows) {
@@ -678,7 +695,24 @@ async function generatePeriods() {
       }
 
       const key = `${normalizeName(name)}|${timeKey}`;
-      periodsMap.set(key, { slots, preorderOffsetMs });
+      const existing = periodsMap.get(key);
+
+      if (existing) {
+        // Check if periods are different
+        const existingKey = existing.slots.join('|');
+        const newKey = slots.join('|');
+        if (existingKey !== newKey) {
+          conflicts.push({
+            name: name,
+            time: timeKey,
+            existingSlots: existing.slots,
+            newSlots: slots
+          });
+        }
+        // If same — just skip, keep existing entry
+      } else {
+        periodsMap.set(key, { slots, preorderOffsetMs });
+      }
     }
 
     // Parse afisha with IDs
@@ -687,7 +721,9 @@ async function generatePeriods() {
     let eventsProcessed = 0;
     let periodsGenerated = 0;
     let skipped = 0;
+    let duplicatesSkipped = 0;
     let trainCode = '';
+    const processedEventIds = new Set();
 
     for (const line of afishaLines) {
       const cols = parseCSVLine(line);
@@ -702,6 +738,13 @@ async function generatePeriods() {
         skipped++;
         continue;
       }
+
+      // Deduplicate by event_id — don't generate periods twice for the same event
+      if (processedEventIds.has(eventId)) {
+        duplicatesSkipped++;
+        continue;
+      }
+      processedEventIds.add(eventId);
 
       // Extract date and time
       const dtParts = datetime.split(' ');
@@ -727,7 +770,7 @@ async function generatePeriods() {
       const endTime = formatTimeNoLeadingZero(endHour, timeParts.m, timeParts.s);
       const endDatetime = `${date} ${endTime}`;
 
-      // Final order time = start - preorder offset
+      // Final order time = start + preorder offset
       const startDt = new Date(
         parseInt(date.split('-')[0]),
         parseInt(date.split('-')[1]) - 1,
@@ -751,6 +794,22 @@ async function generatePeriods() {
 
     periodsData = output.join('\n') + '\n';
     periodsFilename = `periods_${trainCode}.csv`;
+
+    // Show warnings if there were conflicts or duplicates
+    const warnings = [];
+    if (conflicts.length > 0) {
+      warnings.push('<b>⚠ В расписании найдены маршруты с одинаковым названием и временем, но разными периодами:</b>');
+      for (const c of conflicts) {
+        warnings.push(`• «${c.name}» ${c.time} — использованы периоды: ${c.existingSlots.join(', ')}; проигнорированы: ${c.newSlots.join(', ')}`);
+      }
+    }
+    if (duplicatesSkipped > 0) {
+      warnings.push(`<b>ℹ Пропущено дублей event_id:</b> ${duplicatesSkipped} (периоды уже сгенерированы для этих мероприятий)`);
+    }
+    if (warnings.length > 0) {
+      document.getElementById('step3warn').innerHTML = warnings.join('<br>');
+      document.getElementById('step3warn').classList.remove('hidden');
+    }
 
     document.getElementById('step3stats').innerHTML =
       `Мероприятий обработано: ${eventsProcessed}<br>` +
