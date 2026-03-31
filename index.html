@@ -769,18 +769,20 @@ async function generatePeriods() {
 
       const startDatetime = `${date} ${depTimeKey}`;
 
-      // End time = start + 1 hour
-      const endHour = timeParts.h + 1;
-      const endTime = formatTimeNoLeadingZero(endHour, timeParts.m, timeParts.s);
-      const endDatetime = `${date} ${endTime}`;
-
-      // Final order time = start + preorder offset
       const startDt = new Date(
         parseInt(date.split('-')[0]),
         parseInt(date.split('-')[1]) - 1,
         parseInt(date.split('-')[2]),
         timeParts.h, timeParts.m, timeParts.s
       );
+
+      // End time = start + 1 hour (с переходом через полночь)
+      const endDt = new Date(startDt.getTime() + 60 * 60 * 1000);
+      const endDate = formatDate(endDt);
+      const endTime = formatTimeNoLeadingZero(endDt.getHours(), endDt.getMinutes(), endDt.getSeconds());
+      const endDatetime = `${endDate} ${endTime}`;
+
+      // Final order time = start + preorder offset
       const finalDt = new Date(startDt.getTime() + entry.preorderOffsetMs);
       const finalDate = formatDate(finalDt);
       const finalTime = formatTimeNoLeadingZero(finalDt.getHours(), finalDt.getMinutes(), finalDt.getSeconds());
