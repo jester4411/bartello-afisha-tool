@@ -571,13 +571,17 @@ async function matchIds() {
     // Remove BOM if present
     const idsClean = idsText.replace(/^\uFEFF/, '');
 
-    // Parse IDs file (semicolon-separated)
-    // ID;Place ID;Name;Starts At;Status;Created At;Min Event Order Cost (RUB);Hall ID
+    // Parse IDs file (semicolon or comma-separated)
     const idsLines = idsClean.split('\n').map(l => l.trim()).filter(l => l);
     const idMap = new Map(); // key: "normalizedName|date|time" -> id
 
+    // Auto-detect delimiter: semicolons → split by ";", commas → use CSV parser (handles quoted fields)
+    const isSemicolon = idsLines.length > 0 && idsLines[0].includes(';');
+
     for (let i = 0; i < idsLines.length; i++) {
-      const parts = idsLines[i].split(';');
+      const parts = isSemicolon
+        ? idsLines[i].split(';')
+        : parseCSVLine(idsLines[i]);
       if (parts.length < 4) continue;
 
       const id = parts[0].trim();
