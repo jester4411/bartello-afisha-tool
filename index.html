@@ -297,6 +297,25 @@
   <div id="step3error" class="hidden error"></div>
 </div>
 
+<!-- Utils -->
+<div style="margin-top: 24px; background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+  <h2 style="margin-bottom: 16px; font-size: 1.1rem;">🛠 Утилиты</h2>
+  <details open>
+    <summary style="cursor:pointer; font-weight:500; font-size:0.95rem; margin-bottom:12px;">Поиск дублей периодов</summary>
+    <p style="font-size:0.85rem; color:#64748b; margin-bottom:12px;">Загрузите выгрузку периодов из системы (CSV). Инструмент найдёт периоды с одинаковым Event ID и названием, и отдаст список дублей на удаление.</p>
+    <div class="field">
+      <label for="dupsFile">CSV-выгрузка периодов из системы</label>
+      <input type="file" id="dupsFile" accept=".csv">
+    </div>
+    <button class="btn" onclick="findDuplicatePeriods()">Найти дубли</button>
+    <div id="dupsResult" class="hidden">
+      <div class="stats" id="dupsStats"></div>
+      <button class="btn btn-download" onclick="downloadFile(dupsData, dupsFilename)">Скачать <span id="dupsFilenameSpan"></span></button>
+    </div>
+    <div id="dupsError" class="hidden error"></div>
+  </details>
+</div>
+
 <script>
 // --- Tab switching ---
 function switchTab(idx) {
@@ -315,6 +334,8 @@ let afishaWithIdsData = '';
 let afishaWithIdsFilename = '';
 let periodsData = '';
 let periodsFilename = '';
+let dupsData = '';
+let dupsFilename = '';
 
 // --- Utilities ---
 function readFileText(file) {
@@ -825,6 +846,93 @@ async function generatePeriods() {
     document.getElementById('step3result').classList.remove('hidden');
   } catch (e) {
     showError('step3error', 'Ошибка обработки: ' + e.message);
+  }
+}
+
+// --- Utility: Find Duplicate Periods ---
+async function findDuplicatePeriods() {
+  hideError('dupsError');
+  document.getElementById('dupsResult').classList.add('hidden');
+
+  const fileInput = document.getElementById('dupsFile');
+  if (!fileInput.files.length) return showError('dupsError', 'Выберите CSV-файл выгрузки периодов.');
+
+  try {
+    const text = await readFileText(fileInput.files[0]);
+    const clean = text.replace(/^\uFEFF/, '');
+    const lines = clean.split('\n').map(l => l.trim()).filter(l => l);
+
+    if (lines.length < 2) return showError('dupsError', 'Файл пустой или содержит только заголовок.');
+
+    // Parse header to find column indices
+    const headerLine = lines[0];
+    const isSemicolon = headerLine.includes(';') && !headerLine.includes(',');
+    const header = isSemicolon ? headerLine.split(';') : parseCSVLine(headerLine);
+
+    const colEventId = header.findIndex(h => h.includes('Period') && h.includes('Event ID'));
+    const colPeriodId = header.findIndex(h => h.match(/Period.*→.*ID$/) || h.match(/Period → ID/));
+    const colPeriodName = header.findIndex(h => h.includes('Period') && h.includes('Name'));
+
+    if (colEventId === -1 || colPeriodId === -1 || colPeriodName === -1) {
+      return showError('dupsError',
+        'Не найдены нужные колонки. Ожидаются: «Place Event Period → Event ID», «Place Event Period → ID», «Place Event Period → Name».');
+    }
+
+    // Parse all rows
+    const allRows = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = isSemicolon ? lines[i].split(';') : parseCSVLine(lines[i]);
+      const eventId = (cols[colEventId] || '').trim();
+      const periodId = (cols[colPeriodId] || '').trim();
+      const periodName = (cols[colPeriodName] || '').trim();
+      if (!eventId || !periodId || !periodName) continue;
+      allRows.push({ eventId, periodId: parseInt(periodId, 10), periodName, raw: lines[i] });
+    }
+
+    // Group by (Event ID, Period Name)
+    const groups = new Map();
+    for (const row of allRows) {
+      const key = `${row.eventId}|${row.periodName}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+    }
+
+    // Find duplicates — keep smallest Period ID, delete the rest
+    const toDelete = [];
+    for (const [, group] of groups) {
+      if (group.length <= 1) continue;
+      group.sort((a, b) => a.periodId - b.periodId);
+      for (let i = 1; i < group.length; i++) {
+        toDelete.push(group[i]);
+      }
+    }
+
+    if (toDelete.length === 0) {
+      document.getElementById('dupsStats').innerHTML = 'Дубли не найдены ✓';
+      document.getElementById('dupsStats').className = 'stats';
+      document.getElementById('dupsResult').classList.remove('hidden');
+      return;
+    }
+
+    // Build output CSV with header
+    const output = [headerLine];
+    for (const row of toDelete.sort((a, b) => a.periodId - b.periodId)) {
+      output.push(row.raw);
+    }
+
+    dupsData = output.join('\n') + '\n';
+    dupsFilename = 'periods_to_delete.csv';
+
+    const dupGroups = new Set(toDelete.map(r => `${r.eventId}|${r.periodName}`)).size;
+
+    document.getElementById('dupsStats').innerHTML =
+      `Всего периодов в файле: ${allRows.length}<br>` +
+      `Групп с дублями (Event ID + название): ${dupGroups}<br>` +
+      `<b>Периодов на удаление: ${toDelete.length}</b>`;
+    document.getElementById('dupsFilenameSpan').textContent = dupsFilename;
+    document.getElementById('dupsResult').classList.remove('hidden');
+  } catch (e) {
+    showError('dupsError', 'Ошибка обработки: ' + e.message);
   }
 }
 </script>
