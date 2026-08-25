@@ -559,8 +559,18 @@ const MONTHS_RU = {
 };
 
 function parseRuDate(str) {
-  // "март 31, 2026, 06:00" or similar
   const s = str.trim().toLowerCase();
+
+  // ISO: "2026-08-26T13:00:00" или "2026-08-26 13:00:00"
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})[t ](\d{1,2}):(\d{2})/);
+  if (iso) {
+    return {
+      date: `${iso[1]}-${iso[2]}-${iso[3]}`,
+      time: `${parseInt(iso[4], 10)}:${iso[5]}`
+    };
+  }
+
+  // "март 31, 2026, 06:00" or similar
   const match = s.match(/^(\S+)\s+(\d{1,2}),\s*(\d{4}),\s*(\d{1,2}):(\d{2})/);
   if (!match) return null;
   const month = MONTHS_RU[match[1]];
@@ -650,10 +660,21 @@ async function matchIds() {
     afishaWithIdsData = output.join('\n') + '\n';
     afishaWithIdsFilename = `afisha_${trainCode}_with_ids.csv`;
 
-    document.getElementById('step2stats').innerHTML =
+    // Ни одной строки не сматчилось — файл бесполезен, шаг 3 на нём упадёт
+    if (matched === 0) {
+      return showError('step2error',
+        `Ни одна из ${output.length} строк не нашлась в выгрузке. ` +
+        'Сверь названия маршрутов и время отправления с выгрузкой из системы — ' +
+        'они должны совпадать точно.');
+    }
+
+    const stats = document.getElementById('step2stats');
+    stats.className = unmatched > 0 ? 'stats warn' : 'stats';
+    stats.innerHTML =
       `Всего строк в афише: ${output.length}<br>` +
       `Получили ID: ${matched}<br>` +
-      `Без ID (не найдены в выгрузке): ${unmatched}`;
+      `Без ID (не найдены в выгрузке): ${unmatched}` +
+      (unmatched > 0 ? '<br>Строки без ID будут пропущены на шаге 3.' : '');
     document.getElementById('step2filename').textContent = afishaWithIdsFilename;
     document.getElementById('step2result').classList.remove('hidden');
   } catch (e) {
